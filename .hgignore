@@ -2,3 +2,5 @@ syntax: glob
 build/*.*
 win/*sdf
 *.ipch
+win/Release/*
+win/*r.suo
