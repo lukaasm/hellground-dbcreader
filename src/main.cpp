@@ -5,6 +5,8 @@
 #include <fstream>
 #include <string>
 
+#include <vector>
+
 #include "DBCFileLoader.h"
 
 const char* Ext[] =
@@ -15,6 +17,80 @@ const char* Ext[] =
 #define MAX_EXT_SUPPORT 2
 
 using namespace std;
+
+struct FieldInfo
+{
+    string fieldName;
+    string fieldType;
+
+    bool operator=(string& input)
+    {
+        // invalid line format :p
+        size_t pos = input.find(',');
+        
+        if (pos == string::npos)
+            return false;
+
+        fieldName = input.substr(0, pos);
+        fieldType = input.substr(pos+1);
+
+        if (fieldName == "" || fieldType == "")
+            return false;
+
+        return true;
+    }
+};
+
+class DBCTemplate
+{
+    public:
+        ~DBCTemplate() { CleanupFieldInfo(); }
+
+        bool CreateTemplate(string fileName)
+        {
+            ifstream in(fileName);
+            if (in.fail())
+                return false;
+
+            FieldInfo *fi;
+            string line;
+            while (getline(in, line))
+            {
+                fi = new FieldInfo;
+                if (*fi = line)
+                    fInfo.push_back(fi);
+                else
+                {
+                    delete fi;
+                    CleanupFieldInfo();
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        void GetDBCFormat(string &fmt)
+        {
+            fmt.clear();
+
+            for (vector<FieldInfo *>::iterator i = fInfo.begin(); i != fInfo.end(); ++i)
+                fmt += (*i)->fieldType;
+        }
+
+        void CleanupFieldInfo()
+        {
+            for (vector<FieldInfo *>::iterator i = FieldsInfo().begin(); i != FieldsInfo().end(); ++i)
+                delete *i;
+
+            fInfo.clear();
+        }
+
+        vector<FieldInfo *> &FieldsInfo() { return fInfo; }
+
+    private:
+        vector<FieldInfo *> fInfo;
+};
 
 class Extension
 {
@@ -43,8 +119,11 @@ class Extension
         void SetName(const char* name) { _name = name; }
         string &GetName() { return _name; }
 
+        void SetTemplate(DBCTemplate *templt) { _template = templt; }
+        DBCTemplate *GetTemplate() const { return _template; }
+
     protected:
-         Extension() : _firstLine(NULL), _lastLine(NULL), _rowSeparator(NULL), _colSeparator(NULL) {}
+         Extension() : _firstLine(NULL), _lastLine(NULL), _rowSeparator(NULL), _colSeparator(NULL), _template(NULL) {}
          Extension(Extension&);
 
          string *_firstLine;
@@ -53,6 +132,7 @@ class Extension
          string *_colSeparator;
 
     private:
+         DBCTemplate *_template;
          string _name;
 };
 
@@ -71,9 +151,27 @@ class SQLExtension : public Extension
             *temp += "CREATE TABLE `table_name` (\n";
             for (int i = 0; i < cols;)
             {
-                *temp += "`";
-                char str[10];
-                *temp += itoa(i, str, 10);
+                if (DBCTemplate *t = GetTemplate())
+                {
+                    if (t->FieldsInfo()[i]->fieldType.find('x') == string::npos)
+                    {
+                        *temp += "`";
+                        *temp += t->FieldsInfo()[i]->fieldName;
+                    }
+                    else
+                    {
+                        ++i;
+                        continue;
+                    }
+                }
+                else
+                {
+                    *temp += "`";
+                    char str[10];
+                    *temp += itoa(i, str, 10);
+                }
+
+                // still need to create table with proper column format
                 *temp += "` bigint(20) unsigned";
                 if (++i < cols)
                      *temp += ",\n";
@@ -136,8 +234,22 @@ class CSVExtension : public Extension
             string *temp = new string;
             for (int i = 0; i < cols;)
             {
-                char str[10];
-                *temp += itoa(i, str, 10);
+                if (DBCTemplate *t = GetTemplate())
+                {
+                    if (t->FieldsInfo()[i]->fieldType.find('x') == string::npos)
+                        *temp += t->FieldsInfo()[i]->fieldName;
+                    else
+                    {
+                        ++i;
+                        continue;
+                    }
+                }
+                else
+                {
+                    char str[10];
+                    *temp += itoa(i, str, 10);
+                }
+
                 if (++i < cols)
                     *temp += ", ";
             }
@@ -198,52 +310,6 @@ namespace ExtensionSelector
     }
 };
 
-struct FieldInfo
-{
-    string fieldName;
-    string fieldType;
-
-    bool operator=(string& input)
-    {
-        if (input.find(',') == string::npos)
-            return false;
-
-        return true;
-    }
-};
-
-class DBCTemplate
-{
-    public:
-        bool CreateTemplate(string fileName)
-        {
-            ifstream in(fileName);
-            if (in.fail())
-                return false;
-
-            FieldInfo *fi;
-            string line;
-            while (getline(in, line))
-            {
-                fi = new FieldInfo;
-                if (!(*fi = line))
-                {
-                    CleanupFieldInfo();
-                    return false;
-                }
-            }
-
-            return true;
-        }
-
-        void CleanupFieldInfo()
-        {
-        }
-
-    private:
-        FieldInfo *_fI;
-};
-
 int main(int argc, char* argv[])
 {
     cout << "*** DBCReader v 0.01 by lukaasm" << endl;
@@ -285,13 +351,28 @@ int main(int argc, char* argv[])
     string fileToExport = dbcFile + ext->GetName();
     cout << "DBC will be saved as: " << fileToExport << endl;
 
-    //DBCTemplate templt;
-    //bool useTemplate = templt.CreateTemplate(dbcFile + ".ini");
+    DBCTemplate templt;
+    bool useTemplate = templt.CreateTemplate(dbcFile + ".ini");
+
+    string dbcFormat = "";
+    if (useTemplate)
+    {
+        templt.GetDBCFormat(dbcFormat);
+        ext->SetTemplate(&templt);
+    }
 
     DBCFileLoader dbc;
-    if (!dbc.Load(dbcFile.c_str(), ""))
+    if (!dbc.Load(dbcFile.c_str(), dbcFormat.c_str()))
     {
         cout << "Problem with loading file: " << dbcFile << endl;
+        return -1;
+    }
+
+    if (useTemplate && templt.FieldsInfo().size() != dbc.GetCols())
+    {
+        cout << "Something is wrong with your template definition, fields count isn't same as in DBC." << endl;
+        cout << "Template cols: " << templt.FieldsInfo().size() << ", DBC cols: " << dbc.GetCols() << endl << endl;
+        cout << "Fix or remove your template definition and re-run DBCReader." << endl;
         return -1;
     }
 
@@ -308,10 +389,16 @@ int main(int argc, char* argv[])
     {
         for (uint16_t j = 0; j < dbc.GetCols();)
         {
-            outputFile << dbc.getRecord(i).getUInt(j);
+            // use template to obtain proper data
+            if (!useTemplate || templt.FieldsInfo()[j]->fieldType.find('x') == string::npos)
+            {
+                outputFile << dbc.getRecord(i).getUInt(j);
 
-            if (++j <  dbc.GetCols())
-                outputFile << ext->ColumnSeparator();
+                if (++j <  dbc.GetCols())
+                    outputFile << ext->ColumnSeparator();
+            }
+            else
+                ++j;
         }
 
         if (++i <  dbc.GetNumRows())
