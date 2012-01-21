@@ -186,12 +186,12 @@ class CSVExtension : public Extension
 
 namespace ExtensionSelector
 {
-    static Extension *getExtension(const char* type)
+    static Extension *getExtension(string type)
     {
-        if (string(type).find("csv") != string::npos)
+        if (type.find("csv") != string::npos)
             return new CSVExtension;
 
-        if (string(type).find("sql") != string::npos)
+        if (type.find("sql") != string::npos)
             return new SQLExtension;
 
         return NULL;
