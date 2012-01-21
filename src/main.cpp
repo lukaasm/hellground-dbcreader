@@ -7,160 +7,244 @@
 
 #include "DBCFileLoader.h"
 
-const char* ext[] =
+const char* Ext[] =
 {
-    ".sql", // 0
-    ".csv"  // 1
+    "sql", // 0
+    "csv"  // 1
 };
 #define MAX_EXT_SUPPORT 2
 
 using namespace std;
 
-void GetFirstLineFor(fstream &file, const char* ext2, uint32_t cols)
+class Extension
 {
-    for (uint8_t i = 0; i < MAX_EXT_SUPPORT; i++)
-    {
-        if (strstr(ext2, ext[i]))
+    public:
+        ~Extension()
         {
-            switch (i)
-            {
-                case 0: // sql
-                    file << "DROP TABLE IF EXISTS `table_name`;\n";
-                    file << "CREATE TABLE `table_name` (\n";
-                    for (uint16_t i = 0; i < cols;)
-                    {
-                        file << "`" << i << "` bigint(20) unsigned";
-                        if (++i < cols)
-                            file << ",\n";
-                        else
-                            file << "\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 ROW_FORMAT=DYNAMIC;\n";
-                    }
-                    file << "INSERT INTO `table_name` VALUES \n(";
-                    return;
-                case 1: // csv
-                    for (uint16_t i = 0; i < cols; i++)
-                        file << i << ", ";
+            if (_firstLine)
+                delete _firstLine;
 
-                    file << "\n";
-                    return;
-            }
+             if (_lastLine)
+                 delete _lastLine;
+
+             if (_rowSeparator)
+                 delete _rowSeparator;
+
+             if (_colSeparator)
+                 delete _colSeparator;
         }
-    }
-}
 
-void GetLastLineFor(fstream &file, const char* ext2)
+        virtual string &FirstLine(int) =0;
+        virtual string &LastLine() =0;
+
+        virtual string &RowSeparator() =0;
+        virtual string &ColumnSeparator() =0;
+
+        void SetName(const char* name) { _name = name; }
+        string &GetName() { return _name; }
+
+    protected:
+         Extension() : _firstLine(NULL), _lastLine(NULL), _rowSeparator(NULL), _colSeparator(NULL) {}
+         Extension(Extension&);
+
+         string *_firstLine;
+         string *_lastLine;
+         string *_rowSeparator;
+         string *_colSeparator;
+
+    private:
+         string _name;
+};
+
+class SQLExtension : public Extension
 {
-    for (uint8_t i = 0; i < MAX_EXT_SUPPORT; i++)
-    {
-        if (strstr(ext2, ext[i]))
-        {
-            switch (i)
-            {
-                case 0: // sql
-                    file << ");";
-                    return;
-                case 1: // csv
-                    file << "";
-                    return;
-            }
-        }
-    }
-}
+    public:
+        SQLExtension() : Extension() { SetName(".sql"); }
 
-void GetRowSeparatorFor(fstream &file, const char* ext2)
+        string &FirstLine(int cols)
+        {
+            if (_firstLine)
+                return *_firstLine;
+
+            string *temp = new string;
+            *temp += "DROP TABLE IF EXISTS `table_name`;\n";
+            *temp += "CREATE TABLE `table_name` (\n";
+            for (int i = 0; i < cols;)
+            {
+                *temp += "`";
+                char str[10];
+                *temp += itoa(i, str, 10);
+                *temp += "` bigint(20) unsigned";
+                if (++i < cols)
+                     *temp += ",\n";
+                else
+                    *temp += "\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 ROW_FORMAT=DYNAMIC;\n";
+            }
+            *temp += "INSERT INTO `table_name` VALUES \n(";
+
+            _firstLine = temp;
+            return *_firstLine;
+        };
+
+        string &LastLine()
+        {
+            if (_lastLine)
+                return *_lastLine;
+
+            string *temp = new string;
+            *temp += ");";
+
+            _lastLine = temp;
+            return *_lastLine;
+        };
+
+        string &RowSeparator()
+        {
+            if (_rowSeparator)
+                return *_rowSeparator;
+
+            string *temp = new string;
+            *temp += "), \n(";
+
+            _rowSeparator = temp;
+            return *_rowSeparator;
+        };
+
+        string &ColumnSeparator()
+        {
+            if (_colSeparator)
+                return *_colSeparator;
+
+            string *temp = new string;
+            *temp += ", ";
+
+            _colSeparator = temp;
+            return *_colSeparator;
+        };
+};
+
+class CSVExtension : public Extension
 {
-    for (uint8_t i = 0; i < MAX_EXT_SUPPORT; i++)
-    {
-        if (strstr(ext2, ext[i]))
-        {
-            switch (i)
-            {
-                case 0: // sql
-                    file << "), \n(";
-                    return;
-                case 1: // csv
-                    file << "\n";
-                    return;
-            }
-        }
-    }
-}
+    public:
+        CSVExtension() : Extension() { SetName(".csv"); }
 
-void GetColumnSeparatorFor(fstream &file, const char* ext2)
+        string &FirstLine(int cols)
+        {
+            if (_firstLine)
+                return *_firstLine;
+
+            string *temp = new string;
+            for (int i = 0; i < cols;)
+            {
+                char str[10];
+                *temp += itoa(i, str, 10);
+                if (++i < cols)
+                    *temp += ", ";
+            }
+            *temp += "\n";
+
+            _firstLine = temp;
+            return *_firstLine;
+        };
+
+        string &LastLine()
+        {
+            if (_lastLine)
+                return *_lastLine;
+
+            string *temp = new string;
+            *temp += "";
+
+            _lastLine = temp;
+            return *_lastLine;
+        };
+
+        string &RowSeparator()
+        {
+            if (_rowSeparator)
+                return *_rowSeparator;
+
+            string *temp = new string;
+            *temp += "\n";
+
+            _rowSeparator = temp;
+            return *_rowSeparator;
+        };
+
+        string &ColumnSeparator()
+        {
+            if (_colSeparator)
+                return *_colSeparator;
+
+            string *temp = new string;
+            *temp += ", ";
+
+            _colSeparator = temp;
+            return *_colSeparator;
+        };
+};
+
+namespace ExtensionSelector
 {
-    for (uint8_t i = 0; i < MAX_EXT_SUPPORT; i++)
+    static Extension *getExtension(const char* type)
     {
-        if (strstr(ext2, ext[i]))
-        {
-            switch (i)
-            {
-                case 0: // sql
-                case 1: // csv
-                    file << ", ";
-            }
-        }
-    }
-}
+        if (string(type).find("csv") != string::npos)
+            return new CSVExtension;
 
+        if (string(type).find("sql") != string::npos)
+            return new SQLExtension;
+
+        return NULL;
+    }
+};
 
 int main(int argc, char* argv[])
 {
     cout << "*** DBCReader v 0.01 by lukaasm" << endl;
     cout << endl;
-    cout << "*** DBCReader isn't exacly reader, it is more like exporter." << endl;
-    cout << "*** It was developed, because author needed small app that" << endl;
+    cout << "*** DBCReader isn't exacly a reader, it's more like exporter." << endl;
+    cout << "*** It was developed, because I just needed small app that" << endl;
     cout << "*** will convert DBC files to different DB format." << endl;
     cout << "*** I hope it will be useful also for you :]" << endl;
     cout << "*** With regards, lukaasm" << endl << endl << endl;
 
-    string choosenExt = "";
-
-    string fileToExport = "";
+    string dbcFile = "";
     if (argc >= 2)
-        fileToExport = argv[1];
+        dbcFile = argv[1];
 
-    bool supportedExt = false;
+    Extension *ext = NULL;
 
     do
     {
-        if (fileToExport == "")
+        if (dbcFile == "")
         {
            cout << "DBC file: ";
-           cin >> fileToExport;
+           cin >> dbcFile;
         }
-        else if (choosenExt == "")
+        else
         {
             cout << "Output format:" << endl;
-            for (int8_t i = 0; i < MAX_EXT_SUPPORT; i++)
-                cout << i+1 << ". " << ext[i] << endl;
+            for (int i = 0; i < MAX_EXT_SUPPORT; i++)
+                cout << i+1 << ". " << Ext[i] << endl;
 
             int selectExt = 0;
             cin >> selectExt;
 
-            --selectExt;
-
-            if (selectExt >= 0 && selectExt < MAX_EXT_SUPPORT)
-            {
-                supportedExt = true;
-                choosenExt = ext[selectExt];
-                cout << "Choosen extension: " << choosenExt << endl;
-            }
-            else
-                cout << "Choose valid extension." << endl;
+            if (selectExt-1 < MAX_EXT_SUPPORT)
+                ext = ExtensionSelector::getExtension(Ext[selectExt-1]);
         }
     }
-    while (!supportedExt);
+    while (ext == NULL);
 
+        string fileToExport = dbcFile + ext->GetName();
+    cout << "DBC will be saved as: " << fileToExport << endl;
 
     DBCFileLoader dbc;
-    if (!dbc.Load(fileToExport.c_str(), ""))
+    if (!dbc.Load(dbcFile.c_str(), ""))
     {
-        cout << "Specified file: " << fileToExport << " cannot be loaded." << endl;
+        cout << "Problem with loading file: " << dbcFile << endl;
         return -1;
     }
-
-    fileToExport = fileToExport + choosenExt;
-    cout << "DBC will be saved as: " << fileToExport << endl;
 
     fstream outputFile;
     outputFile.open(fileToExport, ios_base::out);
@@ -170,7 +254,7 @@ int main(int argc, char* argv[])
         return -1;
     }
 
-    GetFirstLineFor(outputFile, choosenExt.c_str(), dbc.GetCols());
+    outputFile << ext->FirstLine(dbc.GetCols());
     for (uint16_t i = 0; i < dbc.GetNumRows();)
     {
         for (uint16_t j = 0; j < dbc.GetCols();)
@@ -178,19 +262,20 @@ int main(int argc, char* argv[])
             outputFile << dbc.getRecord(i).getUInt(j);
 
             if (++j <  dbc.GetCols())
-                GetColumnSeparatorFor(outputFile, choosenExt.c_str());
+                outputFile << ext->ColumnSeparator();
         }
 
         if (++i <  dbc.GetNumRows())
-            GetRowSeparatorFor(outputFile, choosenExt.c_str());
+            outputFile << ext->RowSeparator();
     }
+    outputFile << ext->LastLine();
 
-    GetLastLineFor(outputFile, choosenExt.c_str());
     outputFile.close();
 
    cout << endl << " ---------------- " << endl;
    cout << "DBC conversion ended: " << endl;
-   cout << "Exported: " << dbc.GetNumRows() << " rows and " << dbc.GetCols() << " columns as " << choosenExt << " file." << endl;
+   cout << "Exported: " << dbc.GetNumRows() << " rows and " << dbc.GetCols() << " columns as " << ext->GetName() << " file." << endl;
 
+   delete ext;
    return 0;
 }
