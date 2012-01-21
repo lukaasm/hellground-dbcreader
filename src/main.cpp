@@ -198,6 +198,52 @@ namespace ExtensionSelector
     }
 };
 
+struct FieldInfo
+{
+    string fieldName;
+    string fieldType;
+
+    bool operator=(string& input)
+    {
+        if (input.find(',') == string::npos)
+            return false;
+
+        return true;
+    }
+};
+
+class DBCTemplate
+{
+    public:
+        bool CreateTemplate(string fileName)
+        {
+            ifstream in(fileName);
+            if (in.fail())
+                return false;
+
+            FieldInfo *fi;
+            string line;
+            while (getline(in, line))
+            {
+                fi = new FieldInfo;
+                if (!(*fi = line))
+                {
+                    CleanupFieldInfo();
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        void CleanupFieldInfo()
+        {
+        }
+
+    private:
+        FieldInfo *_fI;
+};
+
 int main(int argc, char* argv[])
 {
     cout << "*** DBCReader v 0.01 by lukaasm" << endl;
@@ -218,8 +264,8 @@ int main(int argc, char* argv[])
     {
         if (dbcFile == "")
         {
-           cout << "DBC file: ";
-           cin >> dbcFile;
+            cout << "DBC file: ";
+            getline(cin, dbcFile);
         }
         else
         {
@@ -236,8 +282,11 @@ int main(int argc, char* argv[])
     }
     while (ext == NULL);
 
-        string fileToExport = dbcFile + ext->GetName();
+    string fileToExport = dbcFile + ext->GetName();
     cout << "DBC will be saved as: " << fileToExport << endl;
+
+    //DBCTemplate templt;
+    //bool useTemplate = templt.CreateTemplate(dbcFile + ".ini");
 
     DBCFileLoader dbc;
     if (!dbc.Load(dbcFile.c_str(), ""))
