@@ -1,9 +1,11 @@
 /*
  */
 
+#include <cstdio>
 #include <iostream>
 #include <fstream>
 #include <string>
+#include <sstream>
 
 #include <vector>
 
@@ -16,26 +18,48 @@ const char* Ext[] =
 };
 #define MAX_EXT_SUPPORT 2
 
+#define itoa(a, b) sprintf(b, "%d", a)
+
 using namespace std;
 
 struct FieldInfo
 {
     string fieldName;
-    string fieldType;
+    char fieldType;
 
     bool operator=(string& input)
     {
         // invalid line format :p
         size_t pos = input.find(',');
-        
+
         if (pos == string::npos)
             return false;
 
+        string tmpFieldType;
         fieldName = input.substr(0, pos);
-        fieldType = input.substr(pos+1);
+        tmpFieldType = input.substr(pos+1);
 
-        if (fieldName == "" || fieldType == "")
+        if (fieldName == "" || tmpFieldType == "")
             return false;
+
+        if (tmpFieldType.find(FT_NA) != string::npos)
+            fieldType = FT_NA;
+        else if (tmpFieldType.find(FT_SORT) != string::npos)
+            fieldType = FT_NA;
+        else if (tmpFieldType.find(FT_NA_BYTE) != string::npos)
+            fieldType = FT_NA_BYTE;
+        else if (tmpFieldType.find(FT_BYTE) != string::npos)
+            fieldType = FT_BYTE;
+        else if (tmpFieldType.find(FT_FLOAT) != string::npos)
+            fieldType = FT_FLOAT;
+        else if (tmpFieldType.find(FT_IND) != string::npos)
+            fieldType = FT_IND;
+        else if (tmpFieldType.find(FT_INT) != string::npos)
+            fieldType = FT_INT;
+        else if (tmpFieldType.find(FT_LOGIC) != string::npos)
+            fieldType = FT_LOGIC;
+        else if (tmpFieldType.find(FT_STRING) != string::npos)
+            fieldType = FT_STRING;
 
         return true;
     }
@@ -48,7 +72,7 @@ class DBCTemplate
 
         bool CreateTemplate(string fileName)
         {
-            ifstream in(fileName);
+            ifstream in(fileName.c_str());
             if (in.fail())
                 return false;
 
@@ -116,11 +140,16 @@ class Extension
         virtual string &RowSeparator() =0;
         virtual string &ColumnSeparator() =0;
 
+        virtual string GetDataString(int, int) =0;
+
         void SetName(const char* name) { _name = name; }
         string &GetName() { return _name; }
 
         void SetTemplate(DBCTemplate *templt) { _template = templt; }
         DBCTemplate *GetTemplate() const { return _template; }
+
+        void SetDBC(DBCFileLoader & dbc) { _dbc = &dbc; }
+        DBCFileLoader * GetDBC() const { return _dbc; }
 
     protected:
          Extension() : _firstLine(NULL), _lastLine(NULL), _rowSeparator(NULL), _colSeparator(NULL), _template(NULL) {}
@@ -134,6 +163,7 @@ class Extension
     private:
          DBCTemplate *_template;
          string _name;
+         DBCFileLoader * _dbc;
 };
 
 class SQLExtension : public Extension
@@ -149,30 +179,50 @@ class SQLExtension : public Extension
             string *temp = new string;
             *temp += "DROP TABLE IF EXISTS `table_name`;\n";
             *temp += "CREATE TABLE `table_name` (\n";
+            DBCTemplate * tmplt = GetTemplate();
             for (int i = 0; i < cols;)
             {
-                if (DBCTemplate *t = GetTemplate())
+                if (tmplt)
                 {
-                    if (t->FieldsInfo()[i]->fieldType.find('x') == string::npos)
+                    switch (tmplt->FieldsInfo()[i]->fieldType)
                     {
-                        *temp += "`";
-                        *temp += t->FieldsInfo()[i]->fieldName;
+                        case FT_NA:
+                        case FT_NA_BYTE:
+                            ++i;
+                            continue;
+                        default:
+                            *temp += "`";
+                            *temp += tmplt->FieldsInfo()[i]->fieldName;
+                            break;
                     }
-                    else
+
+                    // still need to create table with proper column format
+                    switch (tmplt->FieldsInfo()[i]->fieldType)
                     {
-                        ++i;
-                        continue;
+                        case FT_FLOAT:
+                            *temp += "` FLOAT ";
+                            break;
+                        case FT_BYTE:
+                        case FT_LOGIC:
+                            *temp += "` TINYINT ";
+                            break;
+                        case FT_STRING:
+                            *temp += "` VARCHAR(255) ";
+                            break;
+                        case FT_IND:
+                        case FT_INT:
+                            *temp += "` INT ";
+                            break;
                     }
                 }
                 else
                 {
                     *temp += "`";
                     char str[10];
-                    *temp += itoa(i, str, 10);
+                    *temp += itoa(i, str);
+                    *temp += "` INT ";
                 }
 
-                // still need to create table with proper column format
-                *temp += "` bigint(20) unsigned";
                 if (++i < cols)
                      *temp += ",\n";
                 else
@@ -219,6 +269,40 @@ class SQLExtension : public Extension
             _colSeparator = temp;
             return *_colSeparator;
         };
+
+        string GetDataString(int row, int column)
+        {
+            stringstream ss;
+
+            ss << "'";
+            if (GetTemplate())
+            {
+                switch (GetTemplate()->FieldsInfo()[column]->fieldType)
+                {
+                    case FT_FLOAT:
+                        ss << GetDBC()->getRecord(row).getFloat(column);
+                        break;
+                    case FT_BYTE:
+                    case FT_LOGIC:
+                        ss << GetDBC()->getRecord(row).getuint8_t(column);
+                        break;
+                    case FT_STRING:
+                        ss << GetDBC()->getRecord(row).getString(column);
+                        break;
+                    case FT_IND:
+                    case FT_INT:
+                        ss << GetDBC()->getRecord(row).getUInt(column);
+                        break;
+                    default:
+                        break;
+                }
+            }
+            else
+                ss << GetDBC()->getRecord(row).getUInt(column);
+            ss << "'";
+
+            return ss.str();
+        }
 };
 
 class CSVExtension : public Extension
@@ -232,22 +316,26 @@ class CSVExtension : public Extension
                 return *_firstLine;
 
             string *temp = new string;
+            DBCTemplate * tmplt = GetTemplate();
             for (int i = 0; i < cols;)
             {
-                if (DBCTemplate *t = GetTemplate())
+                if (tmplt)
                 {
-                    if (t->FieldsInfo()[i]->fieldType.find('x') == string::npos)
-                        *temp += t->FieldsInfo()[i]->fieldName;
-                    else
+                    switch (tmplt->FieldsInfo()[i]->fieldType)
                     {
-                        ++i;
-                        continue;
+                        case FT_NA:
+                        case FT_NA_BYTE:
+                            ++i;
+                            continue;
+                        default:
+                            *temp += tmplt->FieldsInfo()[i]->fieldName;
+                            break;
                     }
                 }
                 else
                 {
                     char str[10];
-                    *temp += itoa(i, str, 10);
+                    *temp += itoa(i, str);
                 }
 
                 if (++i < cols)
@@ -294,6 +382,38 @@ class CSVExtension : public Extension
             _colSeparator = temp;
             return *_colSeparator;
         };
+
+        string GetDataString(int row, int column)
+        {
+            stringstream ss;
+
+            if (GetTemplate())
+            {
+                switch (GetTemplate()->FieldsInfo()[column]->fieldType)
+                {
+                    case FT_FLOAT:
+                        ss << GetDBC()->getRecord(row).getFloat(column);
+                        break;
+                    case FT_BYTE:
+                    case FT_LOGIC:
+                        ss << GetDBC()->getRecord(row).getuint8_t(column);
+                        break;
+                    case FT_STRING:
+                        ss << GetDBC()->getRecord(row).getString(column);
+                        break;
+                    case FT_IND:
+                    case FT_INT:
+                        ss << GetDBC()->getRecord(row).getUInt(column);
+                        break;
+                    default:
+                        break;
+                }
+            }
+            else
+                ss << GetDBC()->getRecord(row).getUInt(column);
+
+            return ss.str();
+        }
 };
 
 namespace ExtensionSelector
@@ -377,28 +497,41 @@ int main(int argc, char* argv[])
     }
 
     fstream outputFile;
-    outputFile.open(fileToExport, ios_base::out);
+    outputFile.open(fileToExport.c_str(), ios_base::out);
     if (outputFile.fail())
     {
         cout << "Problem occured while creating file: " << fileToExport << endl;
         return -1;
     }
 
+    ext->SetDBC(dbc);
     outputFile << ext->FirstLine(dbc.GetCols());
     for (uint16_t i = 0; i < dbc.GetNumRows();)
     {
         for (uint16_t j = 0; j < dbc.GetCols();)
         {
-            // use template to obtain proper data
-            if (!useTemplate || templt.FieldsInfo()[j]->fieldType.find('x') == string::npos)
+            if (useTemplate)
             {
-                outputFile << dbc.getRecord(i).getUInt(j);
-
-                if (++j <  dbc.GetCols())
-                    outputFile << ext->ColumnSeparator();
+                switch (templt.FieldsInfo()[j]->fieldType)
+                {
+                    case FT_FLOAT:
+                    case FT_BYTE:
+                    case FT_LOGIC:
+                    case FT_STRING:
+                    case FT_IND:
+                    case FT_INT:
+                        outputFile << ext->GetDataString(i, j);
+                        break;
+                    default:
+                        ++j;
+                        continue;
+                }
             }
             else
-                ++j;
+                outputFile << dbc.getRecord(i).getUInt(j);
+
+            if (++j <  dbc.GetCols())
+                outputFile << ext->ColumnSeparator();
         }
 
         if (++i <  dbc.GetNumRows())
